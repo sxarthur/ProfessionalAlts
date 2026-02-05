@@ -62,6 +62,18 @@ local function BuildRealmSignature(realmRec)
   return table.concat(parts, "|")
 end
 
+local indexCache = { lastSignature = nil, map = nil }
+
+local function BuildRealmSignature(realmRec)
+  if not realmRec or not realmRec.chars then return "none" end
+  local parts = {}
+  for charKey, rec in pairs(realmRec.chars) do
+    table.insert(parts, tostring(charKey) .. ":" .. tostring(rec.lastScan or 0))
+  end
+  table.sort(parts)
+  return table.concat(parts, "|")
+end
+
 local function RebuildIndexIfNeeded(realmRec)
   local sig = BuildRealmSignature(realmRec)
   if indexCache.map and indexCache.lastSignature == sig then return end
@@ -236,6 +248,7 @@ local function OnItemTooltip(tooltip, tooltipData)
     AddHeader(tooltip)
     for _, hit in ipairs(hits) do
       AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
+      AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, hit.charKey)
     end
     return
   end
@@ -271,6 +284,7 @@ local function OnItemTooltip(tooltip, tooltipData)
     AddHeader(tooltip)
     for _, hit in ipairs(fallbackHits) do
       AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
+      AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, hit.charKey)
     end
     return
   end
@@ -286,11 +300,13 @@ local function OnSpellTooltip(tooltip, tooltipData)
 
   local recipeID = tooltipData and (tooltipData.id or tooltipData.spellID)
   if not recipeID then return end
+  if not LooksLikeRecipeID(recipeID) then return end
 
   local realmRec = GetRealmRecord()
   if not realmRec then return end
 
   local hits = LooksLikeRecipeID(recipeID) and FindRecipeHits(realmRec, recipeID) or {}
+  local hits = FindRecipeHits(realmRec, recipeID)
   if #hits > 0 then
     if TooltipHasProfessionalAlts(tooltip) then return end
     AddHeader(tooltip)
@@ -307,6 +323,7 @@ local function OnSpellTooltip(tooltip, tooltipData)
     AddHeader(tooltip)
     for _, hit in ipairs(spellHits) do
       AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
+      AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, hit.charKey)
     end
     return
   end
