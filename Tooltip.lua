@@ -48,7 +48,19 @@ local function AddHeader(tooltip)
   tooltip:AddLine("|cffffd200ProfessionalAlts|r")
 end
 
--- ---------- Index: itemID -> {recipeID, prof} (rebuilt after scans) ----------
+-- ---------- Index: itemID/spellID -> hits (rebuilt after scans) ----------
+
+local indexCache = { lastSignature = nil, map = nil, spellMap = nil }
+
+local function BuildRealmSignature(realmRec)
+  if not realmRec or not realmRec.chars then return "none" end
+  local parts = {}
+  for charKey, rec in pairs(realmRec.chars) do
+    table.insert(parts, tostring(charKey) .. ":" .. tostring(rec.lastScan or 0))
+  end
+  table.sort(parts)
+  return table.concat(parts, "|")
+end
 
 local indexCache = { lastSignature = nil, map = nil }
 
@@ -67,6 +79,7 @@ local function RebuildIndexIfNeeded(realmRec)
   if indexCache.map and indexCache.lastSignature == sig then return end
 
   local map = {}
+  local spellMap = {}
   if realmRec and realmRec.chars then
     for charKey, rec in pairs(realmRec.chars) do
       for _, prof in pairs(rec.professions or {}) do
@@ -77,6 +90,11 @@ local function RebuildIndexIfNeeded(realmRec)
               map[itemID] = map[itemID] or {}
               table.insert(map[itemID], { recipeID = recipeID, prof = prof, charKey = charKey })
             end
+            local spellID = entry and entry.spellID
+            if spellID then
+              spellMap[spellID] = spellMap[spellID] or {}
+              table.insert(spellMap[spellID], { recipeID = recipeID, prof = prof, charKey = charKey })
+            end
           end
         end
       end
@@ -85,6 +103,7 @@ local function RebuildIndexIfNeeded(realmRec)
 
   indexCache.lastSignature = sig
   indexCache.map = map
+  indexCache.spellMap = spellMap
 end
 
 -- ---------- Fallback: resolve a "maybe recipeID" from taught spell links ------
@@ -176,6 +195,11 @@ local function FindRecipeHits(realmRec, recipeID)
   return hits
 end
 
+local function NormalizeCharLabel(charKey)
+  if not charKey then return nil end
+  return charKey:match("^([^-]+)") or charKey
+end
+
 -- ---------- Hook -------------------------------------------------------------
 
 local function ResolveItemIDFromTooltip(tooltip, tooltipData)
@@ -223,6 +247,7 @@ local function OnItemTooltip(tooltip, tooltipData)
     if TooltipHasProfessionalAlts(tooltip) then return end
     AddHeader(tooltip)
     for _, hit in ipairs(hits) do
+      AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
       AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, hit.charKey)
     end
     return
@@ -235,6 +260,16 @@ local function OnItemTooltip(tooltip, tooltipData)
 
   local rid = ResolveFallbackRecipeID(itemID)
   if not rid then
+    local _, spellID = GetItemSpell(itemID)
+    local spellHits = spellID and indexCache.spellMap and indexCache.spellMap[spellID] or nil
+    if spellHits and #spellHits > 0 then
+      if TooltipHasProfessionalAlts(tooltip) then return end
+      AddHeader(tooltip)
+      for _, hit in ipairs(spellHits) do
+        AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
+      end
+      return
+    end
     if TooltipHasProfessionalAlts(tooltip) then return end
     AddHeader(tooltip)
     tooltip:AddLine("|cffff8040Couldn't resolve recipe ID from this item.|r")
@@ -248,6 +283,7 @@ local function OnItemTooltip(tooltip, tooltipData)
     if TooltipHasProfessionalAlts(tooltip) then return end
     AddHeader(tooltip)
     for _, hit in ipairs(fallbackHits) do
+      AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
       AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, hit.charKey)
     end
     return
@@ -263,16 +299,30 @@ local function OnSpellTooltip(tooltip, tooltipData)
   InitPrintOnce()
 
   local recipeID = tooltipData and (tooltipData.id or tooltipData.spellID)
+  if not recipeID then return end
   if not LooksLikeRecipeID(recipeID) then return end
 
   local realmRec = GetRealmRecord()
   if not realmRec then return end
 
+  local hits = LooksLikeRecipeID(recipeID) and FindRecipeHits(realmRec, recipeID) or {}
   local hits = FindRecipeHits(realmRec, recipeID)
   if #hits > 0 then
     if TooltipHasProfessionalAlts(tooltip) then return end
     AddHeader(tooltip)
     for _, hit in ipairs(hits) do
+      AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
+    end
+    return
+  end
+
+  RebuildIndexIfNeeded(realmRec)
+  local spellHits = indexCache.spellMap and indexCache.spellMap[recipeID] or nil
+  if spellHits and #spellHits > 0 then
+    if TooltipHasProfessionalAlts(tooltip) then return end
+    AddHeader(tooltip)
+    for _, hit in ipairs(spellHits) do
+      AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
       AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, hit.charKey)
     end
     return
