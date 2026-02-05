@@ -123,6 +123,7 @@ function PA:ScanCurrentProfession(_isThrottledIgnored)
         learned = info.learned and true or false,
         minSkillLineRank = info.minSkillLineRank, -- may be nil
         recipeItemID = recipeItemID,              -- NEW
+        spellID = info.skillLineAbilityID or info.spellID,
       }
     else
       p.allRecipes[recipeID] = { recipeItemID = recipeItemID }
