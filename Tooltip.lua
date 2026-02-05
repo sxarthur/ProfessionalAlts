@@ -149,14 +149,38 @@ end
 
 -- ---------- Hook -------------------------------------------------------------
 
-local function OnItemTooltip(tooltip, tooltipData)
-  InitPrintOnce()
-
-  local itemID = tooltipData and tooltipData.id
+local function ResolveItemIDFromTooltip(tooltip, tooltipData)
+  local itemID = tooltipData and (tooltipData.id or tooltipData.itemID)
   if not itemID and tooltipData and tooltipData.hyperlink then
     local parsed = tooltipData.hyperlink:match("item:(%d+)")
     itemID = parsed and tonumber(parsed) or nil
   end
+  if not itemID and tooltip and tooltip.GetItem then
+    local _, link = tooltip:GetItem()
+    if link then
+      local parsed = link:match("item:(%d+)")
+      itemID = parsed and tonumber(parsed) or nil
+    end
+  end
+  return itemID
+end
+
+local function IsRecipeItem(itemID)
+  if not itemID then return false end
+  if C_Item and C_Item.GetItemInfoInstant then
+    local _, _, _, _, _, classID = C_Item.GetItemInfoInstant(itemID)
+    if classID == 9 then
+      return true
+    end
+  end
+  local itemType = select(6, GetItemInfo(itemID))
+  return itemType == "Recipe"
+end
+
+local function OnItemTooltip(tooltip, tooltipData)
+  InitPrintOnce()
+
+  local itemID = ResolveItemIDFromTooltip(tooltip, tooltipData)
   if not itemID then return end
 
   local charRec = GetCurrentCharRecord()
@@ -172,8 +196,7 @@ local function OnItemTooltip(tooltip, tooltipData)
   end
 
   -- 2) Fallback: only show for actual recipe items
-  local itemType = select(6, GetItemInfo(itemID)) -- can be nil if not cached
-  if itemType ~= "Recipe" then
+  if not IsRecipeItem(itemID) then
     return
   end
 
