@@ -149,14 +149,38 @@ end
 
 -- ---------- Hook -------------------------------------------------------------
 
-local function OnItemTooltip(tooltip, tooltipData)
-  InitPrintOnce()
-
-  local itemID = tooltipData and tooltipData.id
+local function ResolveItemIDFromTooltip(tooltip, tooltipData)
+  local itemID = tooltipData and (tooltipData.id or tooltipData.itemID)
   if not itemID and tooltipData and tooltipData.hyperlink then
     local parsed = tooltipData.hyperlink:match("item:(%d+)")
     itemID = parsed and tonumber(parsed) or nil
   end
+  if not itemID and tooltip and tooltip.GetItem then
+    local _, link = tooltip:GetItem()
+    if link then
+      local parsed = link:match("item:(%d+)")
+      itemID = parsed and tonumber(parsed) or nil
+    end
+  end
+  return itemID
+end
+
+local function IsRecipeItem(itemID)
+  if not itemID then return false end
+  if C_Item and C_Item.GetItemInfoInstant then
+    local _, _, _, _, _, classID = C_Item.GetItemInfoInstant(itemID)
+    if classID == 9 then
+      return true
+    end
+  end
+  local itemType = select(6, GetItemInfo(itemID))
+  return itemType == "Recipe"
+end
+
+local function OnItemTooltip(tooltip, tooltipData)
+  InitPrintOnce()
+
+  local itemID = ResolveItemIDFromTooltip(tooltip, tooltipData)
   if not itemID then return end
 
   local charRec = GetCurrentCharRecord()
@@ -172,17 +196,14 @@ local function OnItemTooltip(tooltip, tooltipData)
   end
 
   -- 2) Fallback: only show for actual recipe items
-  local itemType = select(6, GetItemInfo(itemID)) -- can be nil if not cached
-  if itemType ~= "Recipe" then
+  if not IsRecipeItem(itemID) then
     return
   end
 
-  if TooltipHasProfessionalAlts(tooltip) then return end
-  AddHeader(tooltip)
-  tooltip:AddLine("|cffaaaaaaNot indexed yet (scan once to enable precise matching).|r")
-
   local rid = ResolveFallbackRecipeID(itemID)
   if not rid then
+    if TooltipHasProfessionalAlts(tooltip) then return end
+    AddHeader(tooltip)
     tooltip:AddLine("|cffff8040Couldn't resolve recipe ID from this item.|r")
     tooltip:AddLine("|cffaaaaaaOpen the correct profession tier and /profalts scan.|r")
     return
@@ -191,6 +212,8 @@ local function OnItemTooltip(tooltip, tooltipData)
   -- Try to locate this recipeID in any saved profession (current char)
   for _, prof in pairs(charRec.professions or {}) do
     if prof and prof.allRecipes and prof.allRecipes[rid] then
+      if TooltipHasProfessionalAlts(tooltip) then return end
+      AddHeader(tooltip)
       -- Add the real status lines (will prevent duplicate header with TooltipHasProfessionalAlts,
       -- but we already added a header, so we manually render a compact status here)
       local entry = prof.allRecipes[rid] or {}
@@ -218,6 +241,8 @@ local function OnItemTooltip(tooltip, tooltipData)
     end
   end
 
+  if TooltipHasProfessionalAlts(tooltip) then return end
+  AddHeader(tooltip)
   tooltip:AddLine("|cffff8040No scan data for this recipe yet.|r")
   tooltip:AddLine("|cffaaaaaaSwitch to the tier it belongs to and /profalts scan.|r")
 end
