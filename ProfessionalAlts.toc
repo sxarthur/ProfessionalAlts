@@ -1,0 +1,12 @@
+## Interface: 120000
+## Title: ProfessionalAlts
+## Notes: Account-wide profession + recipe tracking across characters.
+## Author: Arthur
+## Version: 0.1
+## SavedVariables: ProfessionalAltsDB
+
+DB.lua
+Core.lua
+Scan.lua
+Tooltip.lua
+UI.lua
