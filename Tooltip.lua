@@ -301,7 +301,8 @@ local function OnSpellTooltip(tooltip, tooltipData)
   local realmRec = GetRealmRecord()
   if not realmRec then return end
 
-  local hits = LooksLikeRecipeID(recipeID) and FindRecipeHits(realmRec, recipeID) or {}
+  local isRecipe = LooksLikeRecipeID(recipeID)
+  local hits = isRecipe and FindRecipeHits(realmRec, recipeID) or {}
   if #hits > 0 then
     if TooltipHasProfessionalAlts(tooltip) then return end
     AddHeader(tooltip)
@@ -319,6 +320,10 @@ local function OnSpellTooltip(tooltip, tooltipData)
     for _, hit in ipairs(spellHits) do
       AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
     end
+    return
+  end
+
+  if not isRecipe then
     return
   end
 
