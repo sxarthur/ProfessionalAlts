@@ -200,12 +200,10 @@ local function OnItemTooltip(tooltip, tooltipData)
     return
   end
 
-  if TooltipHasProfessionalAlts(tooltip) then return end
-  AddHeader(tooltip)
-  tooltip:AddLine("|cffaaaaaaNot indexed yet (scan once to enable precise matching).|r")
-
   local rid = ResolveFallbackRecipeID(itemID)
   if not rid then
+    if TooltipHasProfessionalAlts(tooltip) then return end
+    AddHeader(tooltip)
     tooltip:AddLine("|cffff8040Couldn't resolve recipe ID from this item.|r")
     tooltip:AddLine("|cffaaaaaaOpen the correct profession tier and /profalts scan.|r")
     return
@@ -214,6 +212,8 @@ local function OnItemTooltip(tooltip, tooltipData)
   -- Try to locate this recipeID in any saved profession (current char)
   for _, prof in pairs(charRec.professions or {}) do
     if prof and prof.allRecipes and prof.allRecipes[rid] then
+      if TooltipHasProfessionalAlts(tooltip) then return end
+      AddHeader(tooltip)
       -- Add the real status lines (will prevent duplicate header with TooltipHasProfessionalAlts,
       -- but we already added a header, so we manually render a compact status here)
       local entry = prof.allRecipes[rid] or {}
@@ -241,6 +241,8 @@ local function OnItemTooltip(tooltip, tooltipData)
     end
   end
 
+  if TooltipHasProfessionalAlts(tooltip) then return end
+  AddHeader(tooltip)
   tooltip:AddLine("|cffff8040No scan data for this recipe yet.|r")
   tooltip:AddLine("|cffaaaaaaSwitch to the tier it belongs to and /profalts scan.|r")
 end
