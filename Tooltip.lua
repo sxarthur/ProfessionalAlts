@@ -17,15 +17,13 @@ local function InitPrintOnce()
   PA_Print("Tooltip module loaded.")
 end
 
-local function GetCurrentCharRecord()
+local function GetRealmRecord()
   if not ProfessionalAltsDB or not ProfessionalAltsDB.realms then return nil end
   local realm = (PA and PA.GetRealm and PA:GetRealm()) or GetRealmName()
   if not realm then return nil end
   local r = ProfessionalAltsDB.realms[realm]
   if not r or not r.chars then return nil end
-  local charKey = (PA and PA.GetCharKey and PA:GetCharKey()) or nil
-  if not charKey then return nil end
-  return r.chars[charKey]
+  return r
 end
 
 local function TooltipHasProfessionalAlts(tooltip)
@@ -50,30 +48,50 @@ local function AddHeader(tooltip)
   tooltip:AddLine("|cffffd200ProfessionalAlts|r")
 end
 
--- ---------- Index: itemID -> {recipeID, prof} (rebuilt after scans) ----------
+-- ---------- Index: itemID/spellID -> hits (rebuilt after scans) ----------
 
-local indexCache = { lastScan = nil, map = nil }
+local indexCache = { lastSignature = nil, map = nil, spellMap = nil }
 
-local function RebuildIndexIfNeeded(charRec)
-  local ls = charRec and charRec.lastScan or 0
-  if indexCache.map and indexCache.lastScan == ls then return end
+local function BuildRealmSignature(realmRec)
+  if not realmRec or not realmRec.chars then return "none" end
+  local parts = {}
+  for charKey, rec in pairs(realmRec.chars) do
+    table.insert(parts, tostring(charKey) .. ":" .. tostring(rec.lastScan or 0))
+  end
+  table.sort(parts)
+  return table.concat(parts, "|")
+end
+
+local function RebuildIndexIfNeeded(realmRec)
+  local sig = BuildRealmSignature(realmRec)
+  if indexCache.map and indexCache.lastSignature == sig then return end
 
   local map = {}
-  if charRec and charRec.professions then
-    for _, prof in pairs(charRec.professions) do
-      if prof and prof.allRecipes then
-        for recipeID, entry in pairs(prof.allRecipes) do
-          local itemID = entry and entry.recipeItemID
-          if itemID and not map[itemID] then
-            map[itemID] = { recipeID = recipeID, prof = prof }
+  local spellMap = {}
+  if realmRec and realmRec.chars then
+    for charKey, rec in pairs(realmRec.chars) do
+      for _, prof in pairs(rec.professions or {}) do
+        if prof and prof.allRecipes then
+          for recipeID, entry in pairs(prof.allRecipes) do
+            local itemID = entry and entry.recipeItemID
+            if itemID then
+              map[itemID] = map[itemID] or {}
+              table.insert(map[itemID], { recipeID = recipeID, prof = prof, charKey = charKey })
+            end
+            local spellID = entry and entry.spellID
+            if spellID then
+              spellMap[spellID] = spellMap[spellID] or {}
+              table.insert(spellMap[spellID], { recipeID = recipeID, prof = prof, charKey = charKey })
+            end
           end
         end
       end
     end
   end
 
-  indexCache.lastScan = ls
+  indexCache.lastSignature = sig
   indexCache.map = map
+  indexCache.spellMap = spellMap
 end
 
 -- ---------- Fallback: resolve a "maybe recipeID" from taught spell links ------
@@ -114,9 +132,14 @@ end
 
 -- ---------- Render using a prof+recipeID ------------------------------------
 
-local function AddStatusLines(tooltip, prof, recipeID)
-  if TooltipHasProfessionalAlts(tooltip) then return end
-  AddHeader(tooltip)
+local function AddStatusLinesWithoutHeader(tooltip, prof, recipeID, charLabel)
+  local function RenderLine(prefix, label)
+    if charLabel then
+      tooltip:AddLine(prefix .. " — " .. tostring(charLabel) .. " · " .. label)
+    else
+      tooltip:AddLine(prefix .. " — " .. label)
+    end
+  end
 
   local entry = prof.allRecipes and prof.allRecipes[recipeID] or nil
   local learned = (prof.knownRecipes and prof.knownRecipes[recipeID]) or (entry and entry.learned) or false
@@ -126,25 +149,43 @@ local function AddStatusLines(tooltip, prof, recipeID)
   if prof.tierName then label = label .. " (" .. tostring(prof.tierName) .. ")" end
 
   if learned then
-    tooltip:AddLine("|cff00ff00Known|r — " .. label)
+    RenderLine("|cff00ff00Known|r", label)
     return
   end
 
   if not required or required <= 0 then
-    tooltip:AddLine("|cff00c0ffUnlearned|r — " .. label)
+    RenderLine("|cff00c0ffUnlearned|r", label)
     tooltip:AddLine("|cffaaaaaaRequirement unknown (scan more tiers for better info).|r")
     return
   end
 
   local rank = prof.rank or 0
   if rank >= required then
-    tooltip:AddLine("|cff00c0ffLearnable now|r — " .. label)
+    RenderLine("|cff00c0ffLearnable now|r", label)
     tooltip:AddLine("|cffaaaaaaYour skill: " .. rank .. " / Required: " .. required .. "|r")
   else
     local diff = required - rank
-    tooltip:AddLine("|cffff8040Learnable later|r — " .. label)
+    RenderLine("|cffff8040Learnable later|r", label)
     tooltip:AddLine("|cffaaaaaaNeed +" .. diff .. " skill (" .. rank .. " → " .. required .. ")|r")
   end
+end
+
+local function FindRecipeHits(realmRec, recipeID)
+  local hits = {}
+  if not realmRec or not realmRec.chars then return hits end
+  for charKey, rec in pairs(realmRec.chars) do
+    for _, prof in pairs(rec.professions or {}) do
+      if prof and prof.allRecipes and prof.allRecipes[recipeID] then
+        table.insert(hits, { recipeID = recipeID, prof = prof, charKey = charKey })
+      end
+    end
+  end
+  return hits
+end
+
+local function NormalizeCharLabel(charKey)
+  if not charKey then return nil end
+  return charKey:match("^([^-]+)") or charKey
 end
 
 -- ---------- Hook -------------------------------------------------------------
@@ -183,15 +224,19 @@ local function OnItemTooltip(tooltip, tooltipData)
   local itemID = ResolveItemIDFromTooltip(tooltip, tooltipData)
   if not itemID then return end
 
-  local charRec = GetCurrentCharRecord()
-  if not charRec then return end
+  local realmRec = GetRealmRecord()
+  if not realmRec then return end
 
-  RebuildIndexIfNeeded(charRec)
+  RebuildIndexIfNeeded(realmRec)
 
   -- 1) Preferred: exact match via scanned recipeItemID
-  local hit = indexCache.map and indexCache.map[itemID] or nil
-  if hit then
-    AddStatusLines(tooltip, hit.prof, hit.recipeID)
+  local hits = indexCache.map and indexCache.map[itemID] or nil
+  if hits and #hits > 0 then
+    if TooltipHasProfessionalAlts(tooltip) then return end
+    AddHeader(tooltip)
+    for _, hit in ipairs(hits) do
+      AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
+    end
     return
   end
 
@@ -202,6 +247,16 @@ local function OnItemTooltip(tooltip, tooltipData)
 
   local rid = ResolveFallbackRecipeID(itemID)
   if not rid then
+    local _, spellID = GetItemSpell(itemID)
+    local spellHits = spellID and indexCache.spellMap and indexCache.spellMap[spellID] or nil
+    if spellHits and #spellHits > 0 then
+      if TooltipHasProfessionalAlts(tooltip) then return end
+      AddHeader(tooltip)
+      for _, hit in ipairs(spellHits) do
+        AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
+      end
+      return
+    end
     if TooltipHasProfessionalAlts(tooltip) then return end
     AddHeader(tooltip)
     tooltip:AddLine("|cffff8040Couldn't resolve recipe ID from this item.|r")
@@ -209,36 +264,51 @@ local function OnItemTooltip(tooltip, tooltipData)
     return
   end
 
-  -- Try to locate this recipeID in any saved profession (current char)
-  for _, prof in pairs(charRec.professions or {}) do
-    if prof and prof.allRecipes and prof.allRecipes[rid] then
-      if TooltipHasProfessionalAlts(tooltip) then return end
-      AddHeader(tooltip)
-      -- Add the real status lines (will prevent duplicate header with TooltipHasProfessionalAlts,
-      -- but we already added a header, so we manually render a compact status here)
-      local entry = prof.allRecipes[rid] or {}
-      local learned = (prof.knownRecipes and prof.knownRecipes[rid]) or entry.learned or false
-      local required = entry.minSkillLineRank or 0
-      local label = tostring(prof.name or "Unknown")
-      if prof.tierName then label = label .. " (" .. tostring(prof.tierName) .. ")" end
-
-      if learned then
-        tooltip:AddLine("|cff00ff00Known|r — " .. label)
-      elseif required > 0 then
-        local rank = prof.rank or 0
-        if rank >= required then
-          tooltip:AddLine("|cff00c0ffLearnable now|r — " .. label)
-          tooltip:AddLine("|cffaaaaaaYour skill: " .. rank .. " / Required: " .. required .. "|r")
-        else
-          tooltip:AddLine("|cffff8040Learnable later|r — " .. label)
-          tooltip:AddLine("|cffaaaaaaNeed +" .. (required - rank) .. " skill (" .. rank .. " → " .. required .. ")|r")
-        end
-      else
-        tooltip:AddLine("|cff00c0ffUnlearned|r — " .. label)
-        tooltip:AddLine("|cffaaaaaaRequirement unknown.|r")
-      end
-      return
+  -- Try to locate this recipeID in any saved profession (all chars)
+  local fallbackHits = FindRecipeHits(realmRec, rid)
+  if #fallbackHits > 0 then
+    if TooltipHasProfessionalAlts(tooltip) then return end
+    AddHeader(tooltip)
+    for _, hit in ipairs(fallbackHits) do
+      AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
     end
+    return
+  end
+
+  if TooltipHasProfessionalAlts(tooltip) then return end
+  AddHeader(tooltip)
+  tooltip:AddLine("|cffff8040No scan data for this recipe yet.|r")
+  tooltip:AddLine("|cffaaaaaaSwitch to the tier it belongs to and /profalts scan.|r")
+end
+
+local function OnSpellTooltip(tooltip, tooltipData)
+  InitPrintOnce()
+
+  local recipeID = tooltipData and (tooltipData.id or tooltipData.spellID)
+  if not recipeID then return end
+
+  local realmRec = GetRealmRecord()
+  if not realmRec then return end
+
+  local hits = LooksLikeRecipeID(recipeID) and FindRecipeHits(realmRec, recipeID) or {}
+  if #hits > 0 then
+    if TooltipHasProfessionalAlts(tooltip) then return end
+    AddHeader(tooltip)
+    for _, hit in ipairs(hits) do
+      AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
+    end
+    return
+  end
+
+  RebuildIndexIfNeeded(realmRec)
+  local spellHits = indexCache.spellMap and indexCache.spellMap[recipeID] or nil
+  if spellHits and #spellHits > 0 then
+    if TooltipHasProfessionalAlts(tooltip) then return end
+    AddHeader(tooltip)
+    for _, hit in ipairs(spellHits) do
+      AddStatusLinesWithoutHeader(tooltip, hit.prof, hit.recipeID, NormalizeCharLabel(hit.charKey))
+    end
+    return
   end
 
   if TooltipHasProfessionalAlts(tooltip) then return end
@@ -253,6 +323,14 @@ if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and Enum and
     C_Timer.After(0, function()
       if tooltip and tooltip:IsShown() then
         OnItemTooltip(tooltip, tooltipData)
+      end
+    end)
+  end)
+  TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Spell, function(tooltip, tooltipData)
+    OnSpellTooltip(tooltip, tooltipData)
+    C_Timer.After(0, function()
+      if tooltip and tooltip:IsShown() then
+        OnSpellTooltip(tooltip, tooltipData)
       end
     end)
   end)
